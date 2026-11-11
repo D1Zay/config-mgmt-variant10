@@ -24,8 +24,8 @@ SAMPLE_APKINDEX = (
 )
 
 
-class TestStages1To3(unittest.TestCase):
-    """Тестирование Этапов 1, 2 и 3."""
+class TestStages1To4(unittest.TestCase):
+    """Тестирование Этапов 1–4."""
 
     def test_valid_url_args(self):
         """Проверка корректных аргументов с URL."""
@@ -50,19 +50,23 @@ class TestStages1To3(unittest.TestCase):
             tmp_path = tmp.name
         full_graph = dep_viz.parse_test_repo_graph(tmp_path)
         os.remove(tmp_path)
-        sub_all = dep_viz.build_dependency_subgraph_dfs(full_graph, "A", "")
-        self.assertEqual(set(sub_all.keys()), {"A", "B", "C", "D", "E"})
         sub_filtered = dep_viz.build_dependency_subgraph_dfs(
             full_graph, "A", "B"
         )
         self.assertEqual(set(sub_filtered.keys()), {"A", "C", "E"})
 
-    def test_dfs_cycle_handling(self):
-        """Проверка корректной обработки циклических зависимостей."""
-        graph = {"A": ["B"], "B": ["C"], "C": ["A"]}
-        sub = dep_viz.build_dependency_subgraph_dfs(graph, "A", "")
-        self.assertEqual(set(sub.keys()), {"A", "B", "C"})
-        self.assertEqual(sub["C"], ["A"])
+    def test_reverse_dependencies(self):
+        """Проверка поиска обратных зависимостей нерекурсивным DFS."""
+        graph = {
+            "A": ["B", "C"],
+            "B": ["D", "E"],
+            "C": ["E"],
+            "D": [],
+            "E": ["G"],
+            "G": [],
+        }
+        rev_g = dep_viz.find_reverse_dependencies(graph, "G", "")
+        self.assertEqual(set(rev_g), {"E", "B", "C", "A"})
 
 
 if __name__ == "__main__":

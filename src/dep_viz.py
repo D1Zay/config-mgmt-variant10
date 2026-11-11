@@ -43,6 +43,11 @@ def build_parser():
         default="",
         help="Подстрока для фильтрации пакетов.",
     )
+    parser.add_argument(
+        "--reverse",
+        action="store_true",
+        help="Режим вывода обратных зависимостей для заданного пакета.",
+    )
     return parser
 
 
@@ -101,7 +106,7 @@ def fetch_apkindex_text(repo_source):
         with open(repo_source, "rb") as file_obj:
             raw_data = file_obj.read()
         return extract_apkindex_from_bytes(raw_data)
-    with open(repo_source, "r", encoding="utf-8") as file_obj:
+    with open(repo_source, "r", encoding="utf-8-sig") as file_obj:
         return file_obj.read()
 
 
@@ -216,6 +221,38 @@ def build_dependency_subgraph_dfs(full_graph, start_pkg, filter_substr=""):
     return subgraph
 
 
+def invert_graph(full_graph):
+    """Инвертирует направления ребер графа для поиска обратных зависимостей."""
+    inverted = {pkg: [] for pkg in full_graph}
+    for pkg, deps in full_graph.items():
+        for dep in deps:
+            inverted.setdefault(dep, [])
+            if pkg not in inverted[dep]:
+                inverted[dep].append(pkg)
+    return inverted
+
+
+def find_reverse_dependencies(full_graph, target_pkg, filter_substr=""):
+    """Находит все пакеты, зависящие от заданного, через нерекурсивный DFS."""
+    if target_pkg not in full_graph:
+        raise ValueError(f"Пакет '{target_pkg}' не найден в репозитории.")
+    inverted = invert_graph(full_graph)
+    rev_subgraph = build_dependency_subgraph_dfs(
+        inverted, target_pkg, filter_substr
+    )
+    return [pkg for pkg in rev_subgraph if pkg != target_pkg]
+
+
+def print_reverse_dependencies(target_pkg, rev_deps):
+    """Выводит на экран список обратных зависимостей пакета."""
+    print(f"Обратные зависимости для пакета {target_pkg}:")
+    if not rev_deps:
+        print("нет")
+        return
+    for pkg in rev_deps:
+        print(f"- {pkg}")
+
+
 def print_subgraph(subgraph):
     """Выводит построенный транзитивный граф зависимостей."""
     for pkg, deps in subgraph.items():
@@ -239,10 +276,17 @@ def main(argv=None):
     try:
         validate_args(args)
         full_graph = load_repository_graph(args)
-        subgraph = build_dependency_subgraph_dfs(
-            full_graph, args.package.strip(), args.filter
-        )
-        print_subgraph(subgraph)
+        pkg_name = args.package.strip()
+        if args.reverse:
+            rev_deps = find_reverse_dependencies(
+                full_graph, pkg_name, args.filter
+            )
+            print_reverse_dependencies(pkg_name, rev_deps)
+        else:
+            subgraph = build_dependency_subgraph_dfs(
+                full_graph, pkg_name, args.filter
+            )
+            print_subgraph(subgraph)
     except Exception as err:
         print(f"Ошибка: {err}", file=sys.stderr)
         sys.exit(EXIT_ERROR_CODE)
