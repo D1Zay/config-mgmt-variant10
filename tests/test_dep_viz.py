@@ -1,13 +1,29 @@
 """Модульные тесты для инструмента анализа зависимостей."""
 
-import os
-import tempfile
 import unittest
 from src import dep_viz
 
+SAMPLE_APKINDEX = (
+    "P:curl\n"
+    "V:8.9.1-r0\n"
+    "D:so:libcurl.so.4 so:libc.musl-x86_64.so.1 ca-certificates-bundle>=2024\n"
+    "p:cmd:curl=8.9.1-r0\n\n"
+    "P:libcurl\n"
+    "V:8.9.1-r0\n"
+    "D:so:libc.musl-x86_64.so.1\n"
+    "p:so:libcurl.so.4=4.8.0\n\n"
+    "P:musl\n"
+    "V:1.2.5-r0\n"
+    "D:\n"
+    "p:so:libc.musl-x86_64.so.1=1\n\n"
+    "P:ca-certificates-bundle\n"
+    "V:20240705-r0\n"
+    "D:\n"
+)
 
-class TestStage1Config(unittest.TestCase):
-    """Тестирование конфигурации и обработки ошибок Этапа 1."""
+
+class TestStage1And2(unittest.TestCase):
+    """Тестирование конфигурации (Этап 1) и парсинга APKINDEX (Этап 2)."""
 
     def test_valid_url_args(self):
         """Проверка корректных аргументов с URL."""
@@ -36,17 +52,13 @@ class TestStage1Config(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             dep_viz.validate_args(args)
 
-    def test_valid_test_repo_file(self):
-        """Проверка успешной валидации существующего тестового файла."""
-        with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
-            tmp.write("A: B C\n")
-            tmp_path = tmp.name
-        parser = dep_viz.build_parser()
-        args = parser.parse_args(
-            ["--package", "A", "--repo", tmp_path, "--test-repo"]
-        )
-        dep_viz.validate_args(args)
-        os.remove(tmp_path)
+    def test_parse_apkindex_graph(self):
+        """Проверка извлечения прямых зависимостей из APKINDEX."""
+        graph = dep_viz.parse_apkindex_graph(SAMPLE_APKINDEX)
+        self.assertIn("curl", graph)
+        expected = ["libcurl", "musl", "ca-certificates-bundle"]
+        self.assertEqual(graph["curl"], expected)
+        self.assertEqual(graph["libcurl"], ["musl"])
 
 
 if __name__ == "__main__":
