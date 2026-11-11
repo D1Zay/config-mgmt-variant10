@@ -10,6 +10,7 @@ import urllib.request
 EXIT_ERROR_CODE = 1
 MIN_STR_LEN = 0
 PREFIX_LEN = 2
+SPLIT_LIMIT = 1
 HTTP_PREFIX = "http://"
 HTTPS_PREFIX = "https://"
 APKINDEX_ARCHIVE = "APKINDEX.tar.gz"
@@ -161,14 +162,74 @@ def parse_apkindex_graph(index_text):
     return graph
 
 
-def print_direct_dependencies(pkg_name, graph):
-    """Выводит прямые зависимости заданного пакета."""
-    if pkg_name not in graph:
-        raise ValueError(f"Пакет '{pkg_name}' не найден в репозитории.")
-    deps = graph[pkg_name]
-    print(f"Прямые зависимости пакета {pkg_name}:")
-    for dep in deps:
-        print(f"- {dep}")
+def parse_test_repo_graph(file_path):
+    """Читает граф тестового репозитория, где пакеты названы буквами."""
+    graph = {}
+    with open(file_path, "r", encoding="utf-8-sig") as file_obj:
+        for raw_line in file_obj:
+            line = raw_line.strip()
+            if not line:
+                continue
+            if ":" in line:
+                left, right = line.split(":", SPLIT_LIMIT)
+                pkg = left.strip()
+                deps = right.replace(",", " ").split()
+            else:
+                parts = line.split()
+                pkg = parts[0]
+                deps = parts[SPLIT_LIMIT:]
+            graph.setdefault(pkg, [])
+            for dep in deps:
+                if dep not in graph[pkg]:
+                    graph[pkg].append(dep)
+                graph.setdefault(dep, [])
+    return graph
+
+
+def is_filtered(pkg_name, filter_substr):
+    """Проверяет, должен ли пакет быть исключен по подстроке фильтрации."""
+    return bool(filter_substr) and (filter_substr in pkg_name)
+
+
+def build_dependency_subgraph_dfs(full_graph, start_pkg, filter_substr=""):
+    """Строит транзитивный граф зависимостей алгоритмом DFS без рекурсии."""
+    if start_pkg not in full_graph:
+        raise ValueError(f"Пакет '{start_pkg}' не найден в репозитории.")
+    if is_filtered(start_pkg, filter_substr):
+        return {}
+    subgraph = {}
+    visited = set()
+    stack = [start_pkg]
+    while stack:
+        current = stack.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        neighbors = full_graph.get(current, [])
+        valid_deps = [
+            dep for dep in neighbors if not is_filtered(dep, filter_substr)
+        ]
+        subgraph[current] = valid_deps
+        for dep in reversed(valid_deps):
+            if dep not in visited:
+                stack.append(dep)
+    return subgraph
+
+
+def print_subgraph(subgraph):
+    """Выводит построенный транзитивный граф зависимостей."""
+    for pkg, deps in subgraph.items():
+        deps_str = ", ".join(deps) if deps else "нет"
+        print(f"{pkg} -> {deps_str}")
+
+
+def load_repository_graph(args):
+    """Загружает граф зависимостей в зависимости от выбранного режима."""
+    repo_clean = args.repo.strip()
+    if args.test_repo:
+        return parse_test_repo_graph(repo_clean)
+    index_text = fetch_apkindex_text(repo_clean)
+    return parse_apkindex_graph(index_text)
 
 
 def main(argv=None):
@@ -177,9 +238,11 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         validate_args(args)
-        index_text = fetch_apkindex_text(args.repo.strip())
-        graph = parse_apkindex_graph(index_text)
-        print_direct_dependencies(args.package.strip(), graph)
+        full_graph = load_repository_graph(args)
+        subgraph = build_dependency_subgraph_dfs(
+            full_graph, args.package.strip(), args.filter
+        )
+        print_subgraph(subgraph)
     except Exception as err:
         print(f"Ошибка: {err}", file=sys.stderr)
         sys.exit(EXIT_ERROR_CODE)

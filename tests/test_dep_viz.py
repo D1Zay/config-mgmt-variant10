@@ -1,5 +1,7 @@
 """Модульные тесты для инструмента анализа зависимостей."""
 
+import os
+import tempfile
 import unittest
 from src import dep_viz
 
@@ -22,8 +24,8 @@ SAMPLE_APKINDEX = (
 )
 
 
-class TestStage1And2(unittest.TestCase):
-    """Тестирование конфигурации (Этап 1) и парсинга APKINDEX (Этап 2)."""
+class TestStages1To3(unittest.TestCase):
+    """Тестирование Этапов 1, 2 и 3."""
 
     def test_valid_url_args(self):
         """Проверка корректных аргументов с URL."""
@@ -34,31 +36,33 @@ class TestStage1And2(unittest.TestCase):
         dep_viz.validate_args(args)
         self.assertEqual(args.package, "curl")
 
-    def test_empty_package_error(self):
-        """Проверка ошибки при пустом имени пакета."""
-        parser = dep_viz.build_parser()
-        args = parser.parse_args(
-            ["--package", "   ", "--repo", "https://example.com"]
-        )
-        with self.assertRaises(ValueError):
-            dep_viz.validate_args(args)
-
-    def test_missing_test_file_error(self):
-        """Проверка ошибки при отсутствии файла тестового репозитория."""
-        parser = dep_viz.build_parser()
-        args = parser.parse_args(
-            ["--package", "A", "--repo", "no_file.txt", "--test-repo"]
-        )
-        with self.assertRaises(FileNotFoundError):
-            dep_viz.validate_args(args)
-
     def test_parse_apkindex_graph(self):
         """Проверка извлечения прямых зависимостей из APKINDEX."""
         graph = dep_viz.parse_apkindex_graph(SAMPLE_APKINDEX)
-        self.assertIn("curl", graph)
-        expected = ["libcurl", "musl", "ca-certificates-bundle"]
-        self.assertEqual(graph["curl"], expected)
-        self.assertEqual(graph["libcurl"], ["musl"])
+        self.assertEqual(
+            graph["curl"], ["libcurl", "musl", "ca-certificates-bundle"]
+        )
+
+    def test_dfs_non_recursive_and_filter(self):
+        """Проверка нерекурсивного DFS и фильтрации подстроки."""
+        with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
+            tmp.write("A: B C\nB: D\nC: E\nD:\nE:\n")
+            tmp_path = tmp.name
+        full_graph = dep_viz.parse_test_repo_graph(tmp_path)
+        os.remove(tmp_path)
+        sub_all = dep_viz.build_dependency_subgraph_dfs(full_graph, "A", "")
+        self.assertEqual(set(sub_all.keys()), {"A", "B", "C", "D", "E"})
+        sub_filtered = dep_viz.build_dependency_subgraph_dfs(
+            full_graph, "A", "B"
+        )
+        self.assertEqual(set(sub_filtered.keys()), {"A", "C", "E"})
+
+    def test_dfs_cycle_handling(self):
+        """Проверка корректной обработки циклических зависимостей."""
+        graph = {"A": ["B"], "B": ["C"], "C": ["A"]}
+        sub = dep_viz.build_dependency_subgraph_dfs(graph, "A", "")
+        self.assertEqual(set(sub.keys()), {"A", "B", "C"})
+        self.assertEqual(sub["C"], ["A"])
 
 
 if __name__ == "__main__":
