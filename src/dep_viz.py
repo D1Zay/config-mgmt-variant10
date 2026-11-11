@@ -1,21 +1,27 @@
 """Модуль визуализации графа зависимостей пакетов Alpine Linux (apk)."""
 
 import argparse
+import base64
 import io
 import os
 import sys
 import tarfile
 import urllib.request
+import webbrowser
+import zlib
 
 EXIT_ERROR_CODE = 1
 MIN_STR_LEN = 0
 PREFIX_LEN = 2
 SPLIT_LIMIT = 1
+ZLIB_LEVEL = 9
 HTTP_PREFIX = "http://"
 HTTPS_PREFIX = "https://"
 APKINDEX_ARCHIVE = "APKINDEX.tar.gz"
 APKINDEX_ENTRY = "APKINDEX"
 VERSION_CHARS = "><=~"
+KROKI_D2_URL = "https://kroki.io/d2/svg/"
+USER_AGENT_HEADER = "Mozilla/5.0"
 
 
 def build_parser():
@@ -47,6 +53,16 @@ def build_parser():
         "--reverse",
         action="store_true",
         help="Режим вывода обратных зависимостей для заданного пакета.",
+    )
+    parser.add_argument(
+        "--web",
+        action="store_true",
+        help="Скачать изображение графа на ПК и открыть в браузере.",
+    )
+    parser.add_argument(
+        "--output",
+        default="",
+        help="Путь для сохранения файла изображения графа (SVG).",
     )
     return parser
 
@@ -253,11 +269,47 @@ def print_reverse_dependencies(target_pkg, rev_deps):
         print(f"- {pkg}")
 
 
-def print_subgraph(subgraph):
-    """Выводит построенный транзитивный граф зависимостей."""
+def generate_d2_diagram(subgraph):
+    """Формирует текстовое представление графа зависимостей на языке D2."""
+    lines = ["direction: down"]
     for pkg, deps in subgraph.items():
-        deps_str = ", ".join(deps) if deps else "нет"
-        print(f"{pkg} -> {deps_str}")
+        if not deps:
+            lines.append(f'"{pkg}"')
+        for dep in deps:
+            lines.append(f'"{pkg}" -> "{dep}"')
+    return "\n".join(lines)
+
+
+def build_web_diagram_url(d2_text):
+    """Кодирует описание D2 в URL для просмотра графа на сайте в браузере."""
+    compressed = zlib.compress(d2_text.encode("utf-8"), ZLIB_LEVEL)
+    encoded = base64.urlsafe_b64encode(compressed).decode("ascii")
+    return f"{KROKI_D2_URL}{encoded}"
+
+
+def save_diagram_image(web_url, output_path):
+    """Скачивает изображение графа по URL и сохраняет его на компьютер."""
+    req = urllib.request.Request(
+        web_url, headers={"User-Agent": USER_AGENT_HEADER}
+    )
+    with urllib.request.urlopen(req) as response:
+        img_bytes = response.read()
+    with open(output_path, "wb") as file_obj:
+        file_obj.write(img_bytes)
+
+
+def handle_visualization_output(pkg_name, d2_code, args):
+    """Обрабатывает вывод D2-кода, скачивание картинки и открытие браузера."""
+    print(d2_code)
+    if not args.web and not args.output:
+        return
+    web_url = build_web_diagram_url(d2_code)
+    out_file = args.output.strip() if args.output else f"{pkg_name}_graph.svg"
+    save_diagram_image(web_url, out_file)
+    print(f"\nИзображение сохранено в файл: {os.path.abspath(out_file)}")
+    if args.web:
+        print(f"Ссылка на граф: {web_url}")
+        webbrowser.open(web_url)
 
 
 def load_repository_graph(args):
@@ -286,7 +338,8 @@ def main(argv=None):
             subgraph = build_dependency_subgraph_dfs(
                 full_graph, pkg_name, args.filter
             )
-            print_subgraph(subgraph)
+            d2_code = generate_d2_diagram(subgraph)
+            handle_visualization_output(pkg_name, d2_code, args)
     except Exception as err:
         print(f"Ошибка: {err}", file=sys.stderr)
         sys.exit(EXIT_ERROR_CODE)
